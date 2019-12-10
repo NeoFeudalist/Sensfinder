@@ -407,7 +407,7 @@ instance Show Dataset where
 instance Show Config where
   show conf =
     "Prior theta: Normal(" ++ (show $ meanTheta conf) ++ ", " ++ (show $ sdTheta conf)
-    ++ "^2). Prior tau: N(" ++ (show $ meanTau conf) ++ ", " ++ (show $ sdTau conf) 
+    ++ "^2). Prior tau: Normal(" ++ (show $ meanTau conf) ++ ", " ++ (show $ sdTau conf) 
     ++ "^2)."
     
 instance Show Result where
