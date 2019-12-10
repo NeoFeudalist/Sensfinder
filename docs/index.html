@@ -356,7 +356,7 @@ optimalSens = average . map theta
 <p>Finally, to run Sensfinder, we first take samples from the posterior (1000 with 100 dropout is a decent choice), calculate the two proposals, and then estimate the posterior mean.</p>
 
 <pre>
-<code>
+<code class="language-haskell">
 runSensfinder :: Config -> Parameters -> Int -> Int -> IO Result
 runSensfinder conf params n drop = do
   chain <- sample conf params n drop
