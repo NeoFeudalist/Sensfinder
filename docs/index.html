@@ -323,7 +323,7 @@ proposal2 p1theta paramChain = average $ map ((subtract p1theta) . (2*) . theta)
 
 <p><b>Selecting the optimal sensitivity.</b> If we know the exact values of the parameters \((\theta, \tau)\), then the optimal sensitivity is simply \(\theta\). However, with a posterior distribution over parameters, then we must define a loss function \(L((\theta', \tau'), (\theta, \tau))\) which specifies the loss for choosing the parameter pair \((\theta', \tau')\) when the true parameters are \((\theta, \tau)\). Since \(\tau\) is not important in choosing a sensitivity, then we only need to consider \(\theta\). Therefore our loss function only applies to \(\theta\) alone, \(L(\theta', \theta)\). Then the best sensitivity is the \(\theta\) which minimizes the expected posterior loss, \(\mathbb{E}_{\theta \mid D}[L(\theta', \theta)]\).</p>
 
-<p>A good choice for the ``best'' sensitivity is the posterior mean for \(\theta\), which minimizes the mean squared error loss \(L(\theta', \theta) = (\theta' - \theta)^2\).</p>
+<p>A good choice for the best sensitivity is the posterior mean for \(\theta\), which minimizes the mean squared error loss \(L(\theta', \theta) = (\theta' - \theta)^2\).</p>
 
 $$
 \begin{align}
