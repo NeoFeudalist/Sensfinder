@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<link href="themes/prism.css" rel="stylesheet" />
+<link href="sensfinder.css" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,400i,600,600i,700,700i&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" rel="stylesheet">
+<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+</head>
+<body>
+    <script src="prism.js"></script>
+    <div id="title">Sensfinder</div>
+
+    <h2>
+        <span id="greysecnum">1</span> Introduction
+    </h2>
+
+    <p><b>Sensfinder</b> is a program, written in Haskell, that automatically finds the ideal mouse sensitivity for you. First, you guess where your ideal sensitivity is at, then Sensfinder will ask you to compare two sensitivity settings and to choose the best one. After comparing several times, Sensfinder is able to estimate your ideal sensitivity. It doesn't matter what game – if it has a sensitivity setting, you can use Sensfinder.</p>
+
+    <p>Mouse sensitivity refers to the rate at which the camera in a video game moves as the player's mouse moves. It can be represented as a:</p>
+
+    <ul>
+        <li>Change in camera angle per change in mouse distance. Example: \(12^{\circ} /~\mathrm{cm}\).</li>
+        <li>Change in mouse distance per change in camera angle. Example: \(30\mathrm{cm} /~360^{\circ}\).</li>
+        <li>In-game sensitivity, which is proportional to the change in camera angle per change in mouse distance. Example: \(3.25\) in-game sensivitity.</li>
+    </ul>
+
+    <p>Sensfinder uses either the change in camera angle per change in mouse distance, or the in-game sensitivity.</p>
+
+    <h2>
+        <span id="greysecnum">2</span> Dependencies
+    </h2>
+
+    <p>You can compile Sensfinder with any Haskell compiler that supports the <code>ExistentialQuantification</code> extension.</p>
+
+<pre>
+<code class="language-haskell">
+{-# LANGUAGE ExistentialQuantification #-}
+</code>
+</pre>
+        
+<p>It uses the Haskell Prelude, its <a href="https://hackage.haskell.org/package/base">base</a> libraries, <a href="https://hackage.haskell.org/package/exceptions">exceptions</a>, <a href="https://hackage.haskell.org/package/random">random</a>, and <a href="https://hackage.haskell.org/package/mwc-random">mwc-random</a>. In addition, it also uses the No-U-Turn Sampler implementation described by Jared Tobin in their PhD thesis <i style="color:grey">(Tobin, J. (2018). Embedded Domain-Specific Languages for Bayesian Modelling and Inference. Retrieved from <a href="https://jtobin.io/assets/jtobin-dissertation.pdf">https://jtobin.io/assets/jtobin-dissertation.pdf</a>)</i> and available <a href="https://github.com/jtobin/hnuts">here</a>. It depends on these packages (if not already mentioned above): <a href="https://hackage.haskell.org/package/statistics">statistics</a>, <a href="https://hackage.haskell.org/package/monad-loops">monad-loops</a>, and <a href="https://hackage.haskell.org/package/monad-primitive">monad-primitive</a>.</p>
+</body>
+<pre>
+<code class="language-haskell">
+import Control.Monad
+import Control.Monad.Catch
+import Data.IORef
+import Data.List
+import qualified Numeric.MCMC.NUTS as NUTS
+import System.Random
+import System.Random.MWC
+</code>
+</pre>
+
+<h2>
+    <span id="greysecnum">3</span> Model
+</h2>
+    
+<p>We use a Bayesian parabolic model to represent the user's hidden preferences for each sensivitity setting. We represent sensivity as a change in camera angle per change in mouse distance. The in-game sensitivity is proportional to this, although the constant factor varies depending on the game and the mouse settings.</p>
+
+<p>
+Let \(D = \{(a_1, b_1, y_1), (a_2, b_2, y_2), \dots, (a_n, b_n, y_n)\}\) be a dataset with each element \((a_i, b_i, y_i)\) representing the first sensitivity \(a_i\), the second sensitivity \(b_i\), and the result of comparing the two, \(y_i\). If \(y_i = 1\), then \(a_i\) was better, else \(y_i = -1\) means that \(b_i\) was better.
+</p>
+
+<pre>
+<code class="language-haskell">
+type Sensitivity = Double
+type Mean = Double
+type StDev = Double
+type LogProb = Double
+data Outcome = FirstBetter | SecondBetter
+type Datapoint = (Sensitivity, Sensitivity, Outcome)
+newtype Dataset = Dataset {points :: [Datapoint]}
+data Result = Result {prop1 :: Sensitivity, prop2 :: Sensitivity, optimal :: Sensitivity}
+
+yValue :: Outcome -> Double
+yValue FirstBetter = 1
+yValue SecondBetter = negate 1
+</code>
+</pre>
+
+<p>The user must specify the dataset, as well as four parameters: <code>meanTheta, sdTheta, meanTau, sdTau</code>, which represent the values that they believe to likely be their ideal sensitivity.</p>
+<pre>
+<code class="language-haskell">
+data Config = Config {dataset :: Dataset, meanTheta :: Double, sdTheta :: Double, meanTau :: Double, sdTau :: Double}
+</code>
+</pre>
+
+
+<p>Let \(h(x) = 2^x / 2\) if \(x < 1\), and \(h(x) = x\) otherwise. \(h\) maps the real numbers to the positive reals only, so there are no constraints on the parameters.</p>
+
+<p>We define the following function:</p>
+
+$$
+f(x \mid \theta, \tau) = -\frac{1}{h(\tau)} (x - h(\theta))^2
+$$
+
+The function has two parameters: \(\theta\) is the value that maximizes \(f\) and \(\tau\) is the width of the function. These are also the parameters of our model. We also define some operations that we will need later:
+
+<pre>
+<code class="language-haskell">
+data Parameters = Parameters {theta :: Double, tau :: Double} deriving Eq
+
+h :: Double -> Double
+h x = if x < 1 then 2**x / 2 else x
+
+f :: Double -> Parameters -> Double
+f x params = negate \( (1 / (h \) tau params)) * (x - (h $ theta params)) ^ 2
+
+baseParams :: Parameters
+baseParams = Parameters 0 0
+
+opParams :: (Double -> Double -> Double) -> Parameters -> Parameters -> Parameters
+opParams op p1 p2 = Parameters (op (theta p1) (theta p2)) (op (tau p1) (tau p2))
+
+addParams :: Parameters -> Parameters -> Parameters
+addParams p1 p2 = opParams (+) p1 p2
+
+average :: (Floating a, MonadThrow m) => [a] -> m a
+average xs
+  | length xs == 0 = throwM $ EmptyListError "xs"
+  | otherwise = return \( sum xs / (fromIntegral \) length xs) 
+</code>
+</pre>
+
+<p>We define normal priors on both of these parameters:</p>
+$$
+\theta \sim \mathcal{N}(\mu_{\theta}, \sigma^2_{\theta}), \tau \sim \mathcal{N}(\mu_{\tau}, \sigma^2_{\tau})
+$$
+
+<pre>
+<code class="language-haskell">
+normalLogDensity :: (MonadThrow m) => StDev -> m (Mean -> Double -> LogProb)
+normalLogDensity sd
+  | sd <= 0 = throwM $ OutOfBoundsErrorGt "sd" 0
+  | otherwise = return \( \mean x -> (negate (log sd)) - (log \) 2 * pi) / 2 - sq ((x - mean) / sd) / 2 where
+  sq n = n * n
+
+logPrior :: (MonadThrow m) => Config -> m (Parameters -> LogProb)
+logPrior conf = do
+  nLD1 <- normalLogDensity $ sdTheta conf
+  nLD2 <- normalLogDensity $ sdTau conf
+  return $ \params -> let
+    t1 = nLD1 (meanTheta conf) (theta params)
+    t2 = nLD2 (meanTau conf) (tau params)
+    in t1 + t2
+</code>
+</pre>
+
+<p>
+Let \(g\) be the inverse logit function:
+<p>
+
+$$
+g(x) = \frac{1}{1 + e^{-x}}
+$$
+
+<p>The likelihoods of each data point and the dataset are:</p>
+
+$$
+\begin{align}
+P(y_i \mid a_i, b_i, \theta, \tau) = g((y_i)(f(a_i \mid \theta, \tau) - f(b_i \mid \theta, \tau))) \\
+P(D \mid \theta, \tau) = \prod_{i=1}^{n} P(y_i \mid a_i, b_i, \theta, \tau)
+\end{align}
+$$
+
+<pre>
+<code class="language-haskell">
+sigmoid :: (Floating a) => a -> a
+sigmoid x = 1 / (1 + exp (- x))
+
+logLikelihood :: Config -> Parameters -> LogProb
+logLikelihood conf params = let
+  ds = dataset conf
+  logPointLikelihood par (a, b, outcome) = let y = yValue outcome in
+    log $ sigmoid $ y * ((f a par) - (f b par)) 
+      in sum $ map (logPointLikelihood params) (points ds)
+</code>
+</pre>
+
+The posterior is proportional to the product of the prior and likelihood. Since we use log-probabilities, the log-posterior is equal to the sum of the prior and likelihood plus a constant \(\log P(D)\).
+
+$$
+\begin{align}
+P(\theta, \tau \mid D) \propto P(\theta) P(\tau) \prod_{i=1}^n P(y_i \mid a_i, b_i, \theta, \tau) \\
+\log P(\theta, \tau \mid D) \\
+= \log P(\theta) + \log P(\tau) + \sum_{i=1}^n \log P(y_i \mid a_i, b_i, \theta, \tau) - \log P(D)
+\end{align}
+$$
+
+<pre>
+<code class="language-haskell">
+logPosterior :: (MonadThrow m) => Config -> m (Parameters -> LogProb)
+logPosterior conf = do
+  lPrior <- logPrior conf
+  let lLikely = logLikelihood conf
+  return $ \params -> lPrior params + lLikely params
+</code>
+</pre>
+
+We can easily calculate both the prior and the likelihood, but we must integrate the product of the the prior and the likelihood over parameter space to calculate \(\log P(D)\):
+
+$$
+P(D) = \int_{\theta} \int_{\tau} P(D \mid \theta, \tau) P(\theta) P(\tau)\,d\tau\,d\theta
+$$
+
+There is no simple analytic solution, so we will use the No-U-Turn Sampler, a variant of Hamiltonian Monte Carlo which is a sampling method based on Hamiltonian mechanics. It is a good choice as our model is easily differentiable.
+
+<p><b>Derivatives.</b> 
+First, we find the derivative of both the log-prior and log-likelihood with respect to the parameters:</p>
+
+$$
+\begin{align}
+\frac{\partial \log P(\theta)}{\partial \theta} = - \frac{\theta - \mu_{\theta}}{\sigma^2_{\theta}} \\
+\frac{\partial \log P(\tau)}{\partial \tau} = - \frac{\tau - \mu_{\tau}}{\sigma^2_{\tau}} \\
+\frac{\partial \log P(D \mid \theta, \tau)}{\partial \theta} = \sum_{i=1}^n -\frac{2a_ib_iy_i(g(-\frac{(a_i - b_i)(a_i + b_i - 2h(\theta))}{h(\tau)}))\,\mathrm{max}(h(\theta)\log 2, \log 2)}{h(\tau)} \\
+\frac{\partial \log P(D \mid \theta, \tau)}{\partial \tau} \\
+= \sum_{i=1}^n -\frac{(a_i - b_i)(a_i + b_i - 2h(\theta)y_i(g(-\frac{(a_i - b_i)(a_i + b_i - 2h(\theta))}{h(\tau)}))\,\mathrm{max}(h(\tau)\log 2, \log 2)}{h(\tau)^2}
+\end{align}
+$$
+
+<p>The derivative of the unnormalized log-posterior (without \(P(D)\)) with respect to any parameter is the sum of the derivative of the log-prior and log-likelihood.</p>
+
+<pre>
+<code class="language-haskell">
+dNormalLogDensity :: (MonadThrow m) => StDev -> m (Mean -> Double -> Double)
+dNormalLogDensity sd
+  | sd <= 0 = throwM $ OutOfBoundsErrorGt "sd" 0
+  | otherwise = return $ \mean x -> negate $ (x - mean) / (sd * sd)
+
+dLogPrior :: (MonadThrow m) => Config -> m (Parameters -> Parameters)
+dLogPrior conf = do
+  dnLD1 <- dNormalLogDensity $ sdTheta conf
+  dnLD2 <- dNormalLogDensity $ sdTau conf
+  return $ \params -> let
+    t1 = dnLD1 (meanTheta conf) (theta params)
+    t2 = dnLD2 (meanTau conf) (tau params)
+      in Parameters t1 t2
+
+dLogLikelihood :: Config -> Parameters -> Parameters
+dLogLikelihood conf params = let
+  ds = dataset conf
+  dLogPointLikelihood par (a, b, outcome) = let
+    y = yValue outcome
+    hTheta = h $ theta par
+    hTau = h $ tau par
+    sigmoidTerm = (sigmoid $ negate $ ((a - b) * (a + b - 2 * hTheta) * y) / hTau) - 1
+    piecewiseTerm x = if x < 1 then h x * log 2 else 1
+    wrtTheta = negate $ (2 * (a - b) * y * sigmoidTerm * piecewiseTerm (theta par)) / hTau
+    wrtTau = negate $ ((a - b) * (a + b - 2 * hTheta) * y * sigmoidTerm * piecewiseTerm (tau par)) / (hTau * hTau) in
+      Parameters wrtTheta wrtTau 
+        in foldr addParams baseParams $ map (dLogPointLikelihood params) (points ds)
+
+dLogPosterior :: (MonadThrow m) => Config -> m (Parameters -> Parameters)
+dLogPosterior conf = do
+  dlPrior <- dLogPrior conf
+  let dlLikely = dLogLikelihood conf
+  return $ \params -> addParams (dlPrior params) (dlLikely params)
+
+logPosteriorList :: (MonadThrow m) => Config -> m ([Double] -> LogProb)
+logPosteriorList conf = do
+  lPosterior <- logPosterior conf
+  return $ \params -> lPosterior $ Parameters (params !! 0) (params !! 1)
+
+dLogPosteriorList :: (MonadThrow m) => Config -> m ([Double] -> [Double])
+dLogPosteriorList conf = do
+  dlPosterior <- dLogPosterior conf
+  return $ \params -> let
+    res = dlPosterior $ Parameters (params !! 0) (params !! 1)
+      in [theta res, tau res]
+</code>
+</pre>
+
+<p><b>The No-U-Turn Sampler.</b> The No-U-Turn Sampler is a variant of Hamiltonian Monte Carlo that automatically tunes the step size \(\epsilon\) and the number of leapfrog steps \(L\). It allows us to sample from the posterior using Hamiltonian Monte Carlo without having to painstakingly tune these parameters.</p>
+
+<pre>
+<code class="language-haskell">
+sample :: Config -> Parameters -> Int -> Int -> IO [Parameters]
+sample conf params n drop = do
+  when (n < 1) $ throwM $ OutOfBoundsErrorGtEq "n" 1
+  when (drop >= n) $ throwM $ DropGtEqSamples drop n
+  let chainToParamList = map (\[x0, x1] -> Parameters x0 x1)
+  lPosterior <- logPosteriorList conf
+  dlPosterior <- dLogPosteriorList conf
+  chainToParamList <$> (withSystemRandom . asGenST $
+      NUTS.nutsDualAveraging lPosterior dlPosterior n drop [meanTheta conf, meanTau conf])
+</code>
+</pre>
+
+<h2>
+    <span id="greysecnum">4</span> Algorithm
+</h2>
+
+<p>To sample a proposal, we need two instead of one value as commonly seen in Bayesian optimization. For the first value, we use Thompson sampling: just draw \(\theta\) from the marginal posterior \(P(\theta \mid D) = 
+\int_{\infty}^{\infty} P(\theta, \tau \mid D)\,d\tau\) and use that as the first proposal \(x_1\).</p>
+
+<p>For the second value, we can take \(k\) samples \((\theta_i, \tau_i)\) from the posterior and, for each sample, determine the \(x' \neq x_1\) value such that \(f(x' \mid \theta_i, \tau_i) - f(x_1 \mid \theta_i, \tau_i) = 0\). This determines the proposal \(x_2\) that has a 50 percent prior probability of winning. Since \(f\) is quadratic, this is as easy as solving a quadratic equation, which has two solutions \(x_1\) and \(2\theta_i - x_1\). Since our proposal must not equal \(x_1\), we choose \(x' = 2\theta_i - x_1\). Afterwards, take the mean of all \(x'\) values to find our second proposal \(x_2\). As \(k\) increases, \(x_2\) will converge to the following value:</p>
+
+$$
+x_2 = \int_{\theta} \int_{\tau} (2 \theta - x_1) P(\theta, \tau \mid D) \,d\theta\,d\tau = \int_{\theta} (2 \theta - x_1) P(\theta \mid D)\,d\theta
+$$
+
+<pre>
+<code class="language-haskell">
+genInt :: Int -> Int -> IO Int
+genInt a b = getStdRandom (randomR (a, b))
+
+sampleList :: [a] -> Int -> IO [a]
+sampleList xs n = do
+  when (null xs) $ throwM $ EmptyListError "xs"
+  when (n <= 0) $ throwM $ OutOfBoundsErrorGtEq "n" 1
+  map (xs !!) <$> (replicateM n $ genInt 0 (length xs - 1))
+
+proposal1 :: [Parameters] -> IO Sensitivity
+proposal1 = fmap theta . fmap head . flip sampleList 1
+
+proposal2 :: (MonadThrow m) => Sensitivity -> [Parameters] -> m Double
+proposal2 p1theta paramChain = average $ map ((subtract p1theta) . (2*) . theta) paramChain
+</code>
+</pre>
+
+<p><b>Selecting the optimal sensitivity.</b> If we know the exact values of the parameters \((\theta, \tau)\), then the optimal sensitivity is simply \(\theta\). However, with a posterior distribution over parameters, then we must define a loss function \(L((\theta', \tau'), (\theta, \tau))\) which specifies the loss for choosing the parameter pair \((\theta', \tau')\) when the true parameters are \((\theta, \tau)\). Since \(\tau\) is not important in choosing a sensitivity, then we only need to consider \(\theta\). Therefore our loss function only applies to \(\theta\) alone, \(L(\theta', \theta)\). Then the best sensitivity is the \(\theta\) which minimizes the expected posterior loss, \(\mathbb{E}_{\theta \mid D}[L(\theta', \theta)]\).</p>
+
+<p>A good choice for the ``best'' sensitivity is the posterior mean for \(\theta\), which minimizes the mean squared error loss \(L(\theta', \theta) = (\theta' - \theta)^2\).</p>
+
+$$
+\begin{align}
+\mathbb{E}_{\theta \mid D}[L(\theta', \theta)] = \int_{\theta} (\theta' - \theta)^2 P(\theta \mid D)\,d\theta \\
+\end{align}
+$$
+
+<p>To solve \(\frac{\partial \mathbb{E}_{\theta \mid D}[L(\theta', \theta)]}{\partial \theta'}(\theta') = 0\) for \(\theta'\), which minimizes the loss:</p>
+
+$$
+\begin{align}
+\frac{\partial \mathbb{E}_{\theta \mid D}[L(\theta', \theta)]}{\partial \theta'} = \int_{\theta} 2 (\theta' - \theta) P(\theta \mid D)\,d\theta = \int_{\theta} (2\theta' - 2\theta) P(\theta \mid D)\,d\theta \\
+= \int_{\theta} 2\theta' P(\theta \mid D) - 2\theta P(\theta \mid D)\,d\theta \\
+= \int_{\theta} 2\theta' P(\theta \mid D) \,d\theta - \int_{\theta} 2\theta P(\theta \mid D)\,d\theta \\
+= 2\theta' - 2 \int_{\theta} \theta P(\theta \mid D)\,d\theta = 0 \\
+2\theta' = 2 \int_{\theta} \theta P(\theta \mid D)\,d\theta \\
+\theta' = \int_{\theta} \theta P(\theta \mid D)\,d\theta = \mathbb{E}_{\theta \mid D}[\theta]
+\end{align}
+$$
+
+<p>which is exactly the posterior mean.</p>
+
+<pre>
+<code class="language-haskell">
+optimalSens :: (MonadThrow m) => [Parameters] -> m Double
+optimalSens = average . map theta
+</code>
+</pre>
+
+<p>Finally, to run Sensfinder, we first take samples from the posterior (1000 with 100 dropout is a decent choice), calculate the two proposals, and then estimate the posterior mean.</p>
+
+<code>
+runSensfinder :: Config -> Parameters -> Int -> Int -> IO Result
+runSensfinder conf params n drop = do
+  chain <- sample conf params n drop
+  p1 <- proposal1 chain
+  p2 <- proposal2 p1 chain
+  opt <- optimalSens chain
+  if p1 < p2 then
+    return $ Result p1 p2 opt
+  else
+    return $ Result p2 p1 opt
+</code>
+</pre>
+
+<h2>
+    <span id="greysecnum">5</span> Miscellaneous
+</h2>
+
+<p>To enforce preconditions, we used exceptions, specifically the <code>MonadThrow</code> type class.</p>
+
+<pre>
+<code class="language-haskell">
+data SensfinderError =
+  forall a. (Show a, Num a) => OutOfBoundsErrorGt String a |
+  forall a. (Show a, Num a) => OutOfBoundsErrorLt String a |
+  forall a. (Show a, Num a) => OutOfBoundsErrorGtEq String a |
+  forall a. (Show a, Num a) => OutOfBoundsErrorLtEq String a |
+  forall a. (Show a, Num a) => DropGtEqSamples a a |
+  EmptyListError String
+
+instance Exception SensfinderError
+
+instance Show Outcome where
+  show FirstBetter = "The first sensitivity is better (y = 1)."
+  show SecondBetter = "The second sensitivity is better (y = -1)."
+
+instance Show SensfinderError where
+  show (OutOfBoundsErrorGt val x) = "Value " ++ val ++ " must be greater than " ++ show x ++ "."
+  show (OutOfBoundsErrorLt val x) = "Value " ++ val ++ " must be less than " ++ show x ++ "."
+  show (OutOfBoundsErrorGtEq val x) = "Value " ++ val ++ " must be greater than or equal to " ++ show x ++ "."
+  show (OutOfBoundsErrorLtEq val x) = "Value " ++ val ++ " must be less than or equal to " ++ show x ++ "."
+  show (DropGtEqSamples drop n) = "Cannot drop " ++ show drop ++ " samples out of a total of " ++ show n ++ "."
+  show (EmptyListError xsName) = "List " ++ xsName ++ " must not be empty."
+
+instance Show Dataset where
+  show ds = let
+    pointToLine (a, b, y) = show a ++ ", " ++ show b ++ ", " ++ (show $ yValue y)
+      in "Dataset (in this format: sensitivity 1, sensitivity 2, [y = 1.0 if sensitivity 1 is better, y = -1.0 otherwise])" ++ "\n" ++ (intercalate "\n" $ map pointToLine $ points ds)
+
+instance Show Config where
+  show conf =
+    "Prior theta: Normal(" ++ (show $ meanTheta conf) ++ ", " ++ (show $ sdTheta conf)
+    ++ "^2). Prior tau: N(" ++ (show $ meanTau conf) ++ ", " ++ (show $ sdTau conf) 
+    ++ "^2)."
+    
+instance Show Result where
+  show res =
+    "New proposal: " ++ (show $ prop1 res) ++ " vs. " ++ (show $ prop2 res) ++ ". Optimal sensitivity based on current information: " ++ (show $ optimal res) ++ "."
+
+instance Show Parameters where
+  show params = "theta = " ++ (show $ theta params) ++ ", tau = " ++ (show $ tau params) ++ "."
+</code>
+</pre>
+
+<h2>
+    References  
+</h2>
+
+<ol>
+    <li>Hoffman, M. & Gelman, A. (2014). The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo. <i>Journal of Machine Learning Research</i>, 15, pp. 1593&ndash;1623. Retrieved from <a href="http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf">http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf</a></li>
+    <li>Tobin, J. (2018). Embedded Domain-Specific Languages for Bayesian Modelling and Inference. Retrieved from <a href="https://jtobin.io/assets/jtobin-dissertation.pdf">https://jtobin.io/assets/jtobin-dissertation.pdf</a></li>
+</ol>
+</html>
