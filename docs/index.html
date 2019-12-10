@@ -1,3 +1,5 @@
+<!DOCTYPE html>
+<html>
 <head>
 
 <link href="themes/prism.css" rel="stylesheet" />
@@ -101,13 +103,11 @@ The function has two parameters: \(\theta\) is the value that maximizes \(f\) an
 
 <pre>
 <code class="language-haskell">
-data Parameters = Parameters {theta :: Double, tau :: Double} deriving Eq
-
 h :: Double -> Double
 h x = if x < 1 then 2**x / 2 else x
 
 f :: Double -> Parameters -> Double
-f x params = negate \( (1 / (h \) tau params)) * (x - (h $ theta params)) ^ 2
+f x params = negate $ (1 / (h $ tau params)) * (x - (h $ theta params)) ^ 2
 
 baseParams :: Parameters
 baseParams = Parameters 0 0
@@ -121,7 +121,7 @@ addParams p1 p2 = opParams (+) p1 p2
 average :: (Floating a, MonadThrow m) => [a] -> m a
 average xs
   | length xs == 0 = throwM $ EmptyListError "xs"
-  | otherwise = return \( sum xs / (fromIntegral \) length xs) 
+  | otherwise = return $ sum xs / (fromIntegral $ length xs)
 </code>
 </pre>
 
@@ -135,7 +135,7 @@ $$
 normalLogDensity :: (MonadThrow m) => StDev -> m (Mean -> Double -> LogProb)
 normalLogDensity sd
   | sd <= 0 = throwM $ OutOfBoundsErrorGt "sd" 0
-  | otherwise = return \( \mean x -> (negate (log sd)) - (log \) 2 * pi) / 2 - sq ((x - mean) / sd) / 2 where
+  | otherwise = return $ \mean x -> (negate (log sd)) - (log $ 2 * pi) / 2 - sq ((x - mean) / sd) / 2 where
   sq n = n * n
 
 logPrior :: (MonadThrow m) => Config -> m (Parameters -> LogProb)
@@ -427,3 +427,4 @@ instance Show Parameters where
     <li>Hoffman, M. & Gelman, A. (2014). The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo. <i>Journal of Machine Learning Research</i>, 15, pp. 1593&ndash;1623. Retrieved from <a href="http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf">http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf</a></li>
     <li>Tobin, J. (2018). Embedded Domain-Specific Languages for Bayesian Modelling and Inference. Retrieved from <a href="https://jtobin.io/assets/jtobin-dissertation.pdf">https://jtobin.io/assets/jtobin-dissertation.pdf</a></li>
 </ol>
+</html>
