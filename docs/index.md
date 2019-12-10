@@ -1,5 +1,3 @@
-<!DOCTYPE html>
-<html>
 <head>
 
 <link href="themes/prism.css" rel="stylesheet" />
@@ -429,4 +427,3 @@ instance Show Parameters where
     <li>Hoffman, M. & Gelman, A. (2014). The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo. <i>Journal of Machine Learning Research</i>, 15, pp. 1593&ndash;1623. Retrieved from <a href="http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf">http://jmlr.org/papers/volume15/hoffman14a/hoffman14a.pdf</a></li>
     <li>Tobin, J. (2018). Embedded Domain-Specific Languages for Bayesian Modelling and Inference. Retrieved from <a href="https://jtobin.io/assets/jtobin-dissertation.pdf">https://jtobin.io/assets/jtobin-dissertation.pdf</a></li>
 </ol>
-</html>
